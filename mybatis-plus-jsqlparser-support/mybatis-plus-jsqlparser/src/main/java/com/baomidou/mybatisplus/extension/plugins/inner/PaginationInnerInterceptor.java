@@ -33,6 +33,7 @@ import net.sf.jsqlparser.expression.Alias;
 import net.sf.jsqlparser.expression.Expression;
 import net.sf.jsqlparser.schema.Column;
 import net.sf.jsqlparser.schema.Table;
+import net.sf.jsqlparser.statement.Statement;
 import net.sf.jsqlparser.statement.select.*;
 import org.apache.ibatis.cache.CacheKey;
 import org.apache.ibatis.executor.Executor;
@@ -70,6 +71,8 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
         new SelectItem<>(new Column().withColumnName("COUNT(*)")).withAlias(new Alias("total"))
     );
     protected static final Map<String, MappedStatement> countMsCache = new ConcurrentHashMap<>();
+    protected static final Map<String, Statement> countStatementCache = new ConcurrentHashMap<>();
+    protected static final Map<String, Statement> originalSelectStatementCache = new ConcurrentHashMap<>();
     protected final Log logger = LogFactory.getLog(this.getClass());
 
 
@@ -101,6 +104,21 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
      */
     protected boolean optimizeJoin = true;
 
+    /**
+     * Cache optimize count sql statement or not
+     */
+    protected boolean cacheOptimizeCountSqlStatement = true;
+
+    /**
+     * Direct concat order by sql or not
+     */
+    protected boolean directConcatOrderBySql = true;
+
+    /**
+     * Cache original select sql statement or not
+     */
+    protected boolean cacheOriginalSelectSqlStatement = true;
+
     public PaginationInnerInterceptor(DbType dbType) {
         this.dbType = dbType;
     }
@@ -120,6 +138,7 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
         }
 
         BoundSql countSql;
+        // Here we can use page.countId() to specify a countSql MappedStatement to improve count sql performance
         MappedStatement countMs = buildCountMappedStatement(ms, page.countId());
         if (countMs != null) {
             countSql = countMs.getBoundSql(parameter);
@@ -261,6 +280,14 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
             return lowLevelCountSql(sql);
         }
         try {
+            // Use count sql statement cache
+            if (cacheOptimizeCountSqlStatement) {
+                Statement statement = countStatementCache.get(sql);
+                if (statement != null) {
+                    return statement.toString();
+                }
+            }
+
             Select select = (Select) JsqlParserGlobal.parse(sql);
             // https://github.com/baomidou/mybatis-plus/issues/3920  分页增加union语法支持
             if (select instanceof SetOperationList) {
@@ -350,6 +377,10 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
 
             // 优化 SQL
             plainSelect.setSelectItems(COUNT_SELECT_ITEM);
+            // Cache count sql statement, so we can use it next time
+            if (cacheOptimizeCountSqlStatement) {
+                countStatementCache.put(sql, select);
+            }
             return select.toString();
         } catch (JSQLParserException e) {
             // 无法优化使用原 SQL
@@ -378,21 +409,43 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
      */
     public String concatOrderBy(String originalSql, List<OrderItem> orderList) {
         try {
-            Select selectBody = (Select) JsqlParserGlobal.parse(originalSql);
-            if (selectBody instanceof PlainSelect) {
-                PlainSelect plainSelect = (PlainSelect) selectBody;
-                List<OrderByElement> orderByElements = plainSelect.getOrderByElements();
-                List<OrderByElement> orderByElementsReturn = addOrderByElements(orderList, orderByElements);
-                plainSelect.setOrderByElements(orderByElementsReturn);
-                return plainSelect.toString();
-            } else if (selectBody instanceof SetOperationList) {
-                SetOperationList setOperationList = (SetOperationList) selectBody;
-                List<OrderByElement> orderByElements = setOperationList.getOrderByElements();
-                List<OrderByElement> orderByElementsReturn = addOrderByElements(orderList, orderByElements);
-                setOperationList.setOrderByElements(orderByElementsReturn);
-                return setOperationList.toString();
-            }  else {
+            if (directConcatOrderBySql) {
+                List<OrderByElement> orderByElements = convert2OrderByElements(orderList);
+                String orderBySql = Select.orderByToString(orderByElements);
+                return originalSql + orderBySql;
+            }
+
+            Select selectBody =
+                cacheOriginalSelectSqlStatement ? (Select)originalSelectStatementCache.get(originalSql) : null;
+            if (selectBody == null) {
+                selectBody = (Select)JsqlParserGlobal.parse(originalSql);
+            }
+            if (cacheOriginalSelectSqlStatement) {
+                originalSelectStatementCache.put(originalSql, selectBody);
+            }
+            if (!(selectBody instanceof PlainSelect) && !(selectBody instanceof SetOperationList)) {
                 return originalSql;
+            }
+
+            // use selectBody statement to acquire a lock to avoid concurrent modification
+            synchronized (selectBody) {
+                if (selectBody instanceof PlainSelect) {
+                    PlainSelect plainSelect = (PlainSelect)selectBody;
+                    List<OrderByElement> orderByElements = plainSelect.getOrderByElements();
+                    List<OrderByElement> orderByElementsReturn = addOrderByElements(orderList, orderByElements);
+                    plainSelect.setOrderByElements(orderByElementsReturn);
+                    String selectString = plainSelect.toString();
+                    plainSelect.setOrderByElements(orderByElements);
+                    return selectString;
+                } else {
+                    SetOperationList setOperationList = (SetOperationList)selectBody;
+                    List<OrderByElement> orderByElements = setOperationList.getOrderByElements();
+                    List<OrderByElement> orderByElementsReturn = addOrderByElements(orderList, orderByElements);
+                    setOperationList.setOrderByElements(orderByElementsReturn);
+                    String selectString = setOperationList.toString();
+                    setOperationList.setOrderByElements(orderByElements);
+                    return selectString;
+                }
             }
         } catch (JSQLParserException e) {
             logger.warn("failed to concat orderBy from IPage, exception:\n" + e.getCause());
@@ -400,6 +453,16 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
             logger.warn("failed to concat orderBy from IPage, exception:\n" + e);
         }
         return originalSql;
+    }
+
+    protected List<OrderByElement> convert2OrderByElements(List<OrderItem> orderList) {
+        return orderList.stream().filter(item -> StringUtils.isNotBlank(item.getColumn())).map(item -> {
+            OrderByElement element = new OrderByElement();
+            element.setExpression(new Column(item.getColumn()));
+            element.setAsc(item.isAsc());
+            element.setAscDescPresent(true);
+            return element;
+        }).collect(Collectors.toList());
     }
 
     protected List<OrderByElement> addOrderByElements(List<OrderItem> orderList, List<OrderByElement> orderByElements) {
@@ -470,6 +533,9 @@ public class PaginationInnerInterceptor implements InnerInterceptor {
             .whenNotBlank("dbType", DbType::getDbType, this::setDbType)
             .whenNotBlank("dialect", ClassUtils::newInstance, this::setDialect)
             .whenNotBlank("maxLimit", Long::parseLong, this::setMaxLimit)
-            .whenNotBlank("optimizeJoin", Boolean::parseBoolean, this::setOptimizeJoin);
+            .whenNotBlank("optimizeJoin", Boolean::parseBoolean, this::setOptimizeJoin)
+            .whenNotBlank("cacheOptimizeCountSqlStatement", Boolean::parseBoolean, this::setCacheOptimizeCountSqlStatement)
+            .whenNotBlank("directConcatOrderBySql", Boolean::parseBoolean, this::setDirectConcatOrderBySql)
+            .whenNotBlank("cacheOriginalSelectSqlStatement", Boolean::parseBoolean, this::setCacheOriginalSelectSqlStatement);
     }
 }

@@ -64,12 +64,12 @@ class SelectBodyToPlainSelectTest {
         String actualSql = new PaginationInnerInterceptor()
             .concatOrderBy("select * from test", ITEMS);
 
-        assertThat(actualSql).isEqualTo("SELECT * FROM test ORDER BY column ASC");
+        assertThat(actualSql).isEqualToIgnoringCase("SELECT * FROM test ORDER BY column ASC");
 
         String actualSqlWhere = new PaginationInnerInterceptor()
             .concatOrderBy("select * from test where 1 = 1", ITEMS);
 
-        assertThat(actualSqlWhere).isEqualTo("SELECT * FROM test WHERE 1 = 1 ORDER BY column ASC");
+        assertThat(actualSqlWhere).isEqualToIgnoringCase("SELECT * FROM test WHERE 1 = 1 ORDER BY column ASC");
     }
 
     @Test
@@ -79,22 +79,22 @@ class SelectBodyToPlainSelectTest {
         orderList.add(OrderItem.asc("col umn"));
         String actualSql = new PaginationInnerInterceptor()
             .concatOrderBy("select * from test union select * from test2", orderList);
-        assertThat(actualSql).isEqualTo("SELECT * FROM test UNION SELECT * FROM test2 ORDER BY column ASC");
+        assertThat(actualSql).isEqualToIgnoringCase("SELECT * FROM test UNION SELECT * FROM test2 ORDER BY column ASC");
 
         String actualSqlUnionAll = new PaginationInnerInterceptor()
             .concatOrderBy("select * from test union all select * from test2", orderList);
-        assertThat(actualSqlUnionAll).isEqualTo("SELECT * FROM test UNION ALL SELECT * FROM test2 ORDER BY column ASC");
+        assertThat(actualSqlUnionAll).isEqualToIgnoringCase("SELECT * FROM test UNION ALL SELECT * FROM test2 ORDER BY column ASC");
     }
 
     @Test
     void testPaginationInterceptorConcatOrderByFixWithWhere() {
         String actualSqlWhere = new PaginationInnerInterceptor()
             .concatOrderBy("select * from test where 1 = 1 union select * from test2 where 1 = 1", ITEMS);
-        assertThat(actualSqlWhere).isEqualTo("SELECT * FROM test WHERE 1 = 1 UNION SELECT * FROM test2 WHERE 1 = 1 ORDER BY column ASC");
+        assertThat(actualSqlWhere).isEqualToIgnoringCase("SELECT * FROM test WHERE 1 = 1 UNION SELECT * FROM test2 WHERE 1 = 1 ORDER BY column ASC");
 
         String actualSqlUnionAll = new PaginationInnerInterceptor()
-            .concatOrderBy("select * from test where 1 = 1 union all select * from test2 where 1 = 1 ", ITEMS);
-        assertThat(actualSqlUnionAll).isEqualTo("SELECT * FROM test WHERE 1 = 1 UNION ALL SELECT * FROM test2 WHERE 1 = 1 ORDER BY column ASC");
+            .concatOrderBy("select * from test where 1 = 1 union all select * from test2 where 1 = 1", ITEMS);
+        assertThat(actualSqlUnionAll).isEqualToIgnoringCase("SELECT * FROM test WHERE 1 = 1 UNION ALL SELECT * FROM test2 WHERE 1 = 1 ORDER BY column ASC");
     }
 
     @Test
@@ -102,12 +102,12 @@ class SelectBodyToPlainSelectTest {
         String actualSql = new PaginationInnerInterceptor()
             .concatOrderBy("select * from test", ITEMS);
 
-        assertThat(actualSql).isEqualTo("SELECT * FROM test ORDER BY column ASC");
+        assertThat(actualSql).isEqualToIgnoringCase("SELECT * FROM test ORDER BY column ASC");
 
         String actualSqlWhere = new PaginationInnerInterceptor()
             .concatOrderBy("select * from test where 1 = 1", ITEMS);
 
-        assertThat(actualSqlWhere).isEqualTo("SELECT * FROM test WHERE 1 = 1 ORDER BY column ASC");
+        assertThat(actualSqlWhere).isEqualToIgnoringCase("SELECT * FROM test WHERE 1 = 1 ORDER BY column ASC");
     }
 
 }

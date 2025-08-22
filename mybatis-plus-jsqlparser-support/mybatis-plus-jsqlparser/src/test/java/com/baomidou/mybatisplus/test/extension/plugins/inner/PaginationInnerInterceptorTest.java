@@ -104,6 +104,6 @@ class PaginationInnerInterceptorTest {
     }
 
     void assertsConcatOrderBy(String sql, String targetSql, OrderItem... orderItems) {
-        assertThat(interceptor.concatOrderBy(sql, Arrays.asList(orderItems))).isEqualTo(targetSql);
+        assertThat(interceptor.concatOrderBy(sql, Arrays.asList(orderItems))).isEqualToIgnoringCase(targetSql);
     }
 }
